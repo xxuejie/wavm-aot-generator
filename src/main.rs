@@ -33,6 +33,7 @@ const uint64_t biasedInstanceId = 0;\n\n",
     let mut next_import_index = 0;
     let mut next_function_index = 0;
     let mut function_entries: Vec<Option<usize>> = vec![];
+    let mut has_main = false;
     loop {
         let state = parser.read();
         match *state {
@@ -94,8 +95,10 @@ const uint64_t biasedInstanceId = 0;\n\n",
                 glue_file
                     .write_all(
                         format!(
-                            "extern {};\n",
-                            convert_func_type_to_c_function(&func_type, name)
+                            "extern {};
+const uint64_t functionDefMutableDatas{} = 0;\n",
+                            convert_func_type_to_c_function(&func_type, name),
+                            next_function_index,
                         )
                         .as_bytes(),
                     )
@@ -113,13 +116,16 @@ const uint64_t biasedInstanceId = 0;\n\n",
                 glue_file
                     .write_all(
                         format!(
-                            "#define wavm_exported_function_{} functionDef{}
-const uint64_t functionDefMutableDatas{} = 0;\n",
-                            field, function_index, function_index,
+                            "#define wavm_exported_function_{} functionDef{}\n",
+                            field, function_index,
                         )
                         .as_bytes(),
                     )
                     .expect("write glue file");
+
+                if field == "_start" {
+                    has_main = true;
+                }
             }
             ParserState::DataSectionEntryBodyChunk(data) => {
                 println!(
@@ -135,15 +141,17 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
         }
     }
 
-    glue_file
-        .write_all(
-            b"\nint main() {
+    if has_main {
+        glue_file
+            .write_all(
+                b"\nint main() {
   wavm_exported_function__start();
   // This should not be reached
   return -1;
 }\n",
-        )
-        .expect("write glue file");
+            )
+            .expect("write glue file");
+    }
 }
 
 fn wasm_type_to_c_type(t: Option<Type>) -> String {
