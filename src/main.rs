@@ -1,19 +1,23 @@
+#[macro_use]
+extern crate log;
+
 use std::env;
 use std::fs::File;
 use std::io::{self, prelude::*};
 use wasmparser::{
-    ExternalKind, FuncType, ImportSectionEntryType, Parser, ParserState, SectionCode, Type,
-    WasmDecoder,
+    ExternalKind, FuncType, ImportSectionEntryType, MemoryType, Operator, Parser, ParserState,
+    ResizableLimits, SectionCode, Type, WasmDecoder,
 };
 
 fn main() {
+    drop(env_logger::init());
     let args = env::args().collect::<Vec<_>>();
     if args.len() != 3 {
         println!("Usage: {} <input wasm file> <output module name>", args[0]);
         return;
     }
     let buf: Vec<u8> = read_wasm(&args[1]).unwrap();
-    let mut glue_file = File::create(format!("{}_glue.c", args[2])).expect("create glue file");
+    let mut glue_file = File::create(format!("{}_glue.h", args[2])).expect("create glue file");
     glue_file
         .write_all(
             b"#include<stddef.h>
@@ -34,6 +38,9 @@ const uint64_t biasedInstanceId = 0;\n\n",
     let mut next_function_index = 0;
     let mut function_entries: Vec<Option<usize>> = vec![];
     let mut has_main = false;
+    let mut memories: Vec<Vec<u8>> = vec![];
+    let mut data_index: Option<usize> = None;
+    let mut data_offset: Option<usize> = None;
     loop {
         let state = parser.read();
         match *state {
@@ -67,23 +74,16 @@ const uint64_t biasedInstanceId = 0;\n\n",
                 function_entries.push(None);
                 let func_type = &type_entries[index as usize];
                 let name = format!("wavm_{}_{}", module, field);
+                let import_symbol = format!("functionImport{}", next_import_index);
                 glue_file
-                    .write_all(
-                        format!(
-                            "extern {};\n",
-                            convert_func_type_to_c_function(&func_type, name.clone())
-                        )
-                        .as_bytes(),
-                    )
+                    .write_all(format!("#define {} {}\n", name, import_symbol).as_bytes())
                     .expect("write glue file");
-                let import_symbol = format!("*functionImport{}", next_import_index);
                 next_import_index += 1;
                 glue_file
                     .write_all(
                         format!(
-                            "const {} = {};\n",
-                            convert_func_type_to_c_function(&func_type, import_symbol),
-                            name
+                            "extern {};\n",
+                            convert_func_type_to_c_function(&func_type, import_symbol)
                         )
                         .as_bytes(),
                     )
@@ -127,25 +127,65 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
                     has_main = true;
                 }
             }
+            ParserState::MemorySectionEntry(MemoryType {
+                limits: ResizableLimits { initial: pages, .. },
+                ..
+            }) => {
+                let mut mem = vec![];
+                mem.resize(pages as usize * 64 * 1024, 0);
+                memories.push(mem);
+            }
+            ParserState::BeginActiveDataSectionEntry(i) => {
+                data_index = Some(i as usize);
+            }
+            ParserState::EndDataSectionEntry => {
+                data_index = None;
+                data_offset = None;
+            }
+            ParserState::InitExpressionOperator(Operator::I32Const { value }) => {
+                data_offset = Some(value as usize)
+            }
             ParserState::DataSectionEntryBodyChunk(data) => {
-                println!(
-                    "{} bytes data section body chunk for {:?}",
-                    data.len(),
-                    section_name
-                );
+                if let (Some(index), Some(offset)) = (data_index, data_offset) {
+                    memories[index][offset..offset + data.len()].copy_from_slice(&data);
+                }
             }
             ParserState::EndWasm => break,
             ParserState::Error(ref err) => panic!("Error: {:?}", err),
-            ParserState::CodeOperator(_) => (),
-            _ => println!("{:?}", state),
+            _ => debug!("Unprocessed states: {:?}", state),
         }
+    }
+
+    for (i, mem) in memories.iter().enumerate() {
+        glue_file
+            .write_all(format!("uint8_t memory{}[{}] = {{", i, mem.len()).as_bytes())
+            .expect("write glue file");
+        let reversed_striped_mem: Vec<u8> = mem
+            .iter()
+            .rev()
+            .map(|x| *x)
+            .skip_while(|c| *c == 0)
+            .collect();
+        let striped_mem: Vec<u8> = reversed_striped_mem.into_iter().rev().collect();
+        for (j, c) in striped_mem.iter().enumerate() {
+            if j % 32 == 0 {
+                glue_file.write_all(b"\n  ").expect("write glue file");
+            }
+            glue_file
+                .write_all(format!("0x{:x}", c).as_bytes())
+                .expect("write glue file");
+            if j < striped_mem.len() - 1 {
+                glue_file.write_all(b", ").expect("write glue file");
+            }
+        }
+        glue_file.write_all(b"};\n").expect("write glue file");
     }
 
     if has_main {
         glue_file
             .write_all(
                 b"\nint main() {
-  wavm_exported_function__start();
+  wavm_exported_function__start(NULL);
   // This should not be reached
   return -1;
 }\n",
@@ -171,11 +211,12 @@ fn convert_func_type_to_c_function(func_type: &FuncType, name: String) -> String
     if func_type.form != Type::Func || func_type.returns.len() > 1 {
         panic!("Invalid func type: {:?}", func_type);
     }
-    let fields: Vec<String> = func_type
+    let mut fields: Vec<String> = func_type
         .params
         .iter()
         .map(|t| wasm_type_to_c_type(Some(*t)))
         .collect();
+    fields.insert(0, "void*".to_string());
     format!(
         "{} ({}) ({})",
         wasm_type_to_c_type(func_type.returns.get(0).cloned()),
