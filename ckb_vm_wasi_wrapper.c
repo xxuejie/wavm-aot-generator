@@ -1,4 +1,4 @@
-#include "helloworld-riscv_glue.h"
+#include "helloworld_riscv_glue.h"
 #include "ckb_syscalls.h"
 #include <stdio.h>
 
