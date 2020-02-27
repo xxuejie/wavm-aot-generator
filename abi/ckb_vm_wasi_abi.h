@@ -31,6 +31,9 @@ int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, in
 
     written_bytes += buffer_length;
   }
+  if (written_bytes_address != 0) {
+    *((uint32_t*) &memory0[written_bytes_address]) = written_bytes;
+  }
 
   return 0;
 }

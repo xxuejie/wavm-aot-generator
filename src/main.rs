@@ -158,6 +158,9 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
 
     for (i, mem) in memories.iter().enumerate() {
         glue_file
+            .write_all(format!("uint32_t memory{}_length = {};\n", i, mem.len()).as_bytes())
+            .expect("write glue file");
+        glue_file
             .write_all(format!("uint8_t memory{}[{}] = {{", i, mem.len()).as_bytes())
             .expect("write glue file");
         let reversed_striped_mem: Vec<u8> = mem
