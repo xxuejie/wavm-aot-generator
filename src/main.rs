@@ -24,6 +24,7 @@ fn main() {
     }
     let buf: Vec<u8> = read_wasm(&args[1]).unwrap();
     let mut glue_file = File::create(format!("{}_glue.h", args[2])).expect("create glue file");
+    let mut object_file = File::create(format!("{}.o", args[2])).expect("create object file");
     let header_id = format!("{}_GLUE_H", args[2]);
     glue_file
         .write_all(
@@ -90,8 +91,7 @@ const uint64_t biasedInstanceId = 0;
             }
             ParserState::SectionRawData(data) => {
                 if section_name.clone().unwrap_or("".to_string()) == "wavm.precompiled_object" {
-                    let mut f = File::create(format!("{}.o", args[2])).expect("create object file");
-                    f.write_all(data).expect("write object file");
+                    object_file.write_all(data).expect("write object file");
                 }
             }
             ParserState::TypeSectionEntry(ref t) => {
