@@ -10,7 +10,7 @@ extern uint8_t* memory0;
 
 int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
 {
-  static uint8_t temp_buffer[65];
+  (void) dummy;
 
   int32_t written_bytes = 0;
   for (int32_t i = 0; i < num; i++) {
@@ -19,7 +19,7 @@ int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, in
     uint32_t buffer_length = *((uint32_t*) &memory0[address + i * 8 + 4]);
 
     int32_t written = write(fd, buf, buffer_length);
-    written_bytes += buffer_length;
+    written_bytes += written;
   }
   if (written_bytes_address != 0) {
     *((uint32_t*) &memory0[written_bytes_address]) = written_bytes;

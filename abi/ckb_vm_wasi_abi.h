@@ -8,7 +8,7 @@
 extern uint8_t* memory0;
 #endif
 
-int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t writtenBytesAddress)
+int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
 {
   static uint8_t temp_buffer[65];
 
@@ -24,7 +24,7 @@ int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, in
       int32_t b = (left_bytes > 64) ? 64 : left_bytes;
       memcpy(temp_buffer, &buf[written], b);
       temp_buffer[b] = '\0';
-      ckb_debug(temp_buffer);
+      ckb_debug((const char*) temp_buffer);
 
       written += b;
     }
