@@ -179,6 +179,9 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
             }
         }
         glue_file.write_all(b"};\n").expect("write glue file");
+        glue_file
+            .write_all(format!("#define MEMORY{}_DEFINED 1\n", i).as_bytes())
+            .expect("write glue file");
     }
 
     if has_main {

@@ -32,7 +32,11 @@ $ git clone https://github.com/xxuejie/wavm-aot-generator
 $ cd wavm-aot-generator
 $ cargo build --release
 $ ./target/release/wavm-aot-generator ../WAVM/build/helloworld.precompiled.riscv64.wasm helloworld_riscv
-$ riscv64-unknown-elf-gcc -g -o helloworld.riscv64 helloworld_riscv.o ckb_vm_wasi_wrapper.c -I $TOP/ckb-c-stdlib
+$ cat << EOF > dummy.c
+#include "helloworld_riscv_glue.h"
+#include "abi/ckb_vm_wasi_abi.h"
+EOF
+$ riscv64-unknown-elf-gcc -g -o helloworld.riscv64 helloworld_riscv.o dummy.c -I $TOP/ckb-c-stdlib
 $ ../ckb-binary/patcher/target/release/ckb-binary-patcher -i helloworld.riscv64 -o helloworld.patched.riscv64
 ```
 

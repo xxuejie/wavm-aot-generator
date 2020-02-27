@@ -1,6 +1,12 @@
-#include "helloworld_riscv_glue.h"
+#include <string.h>
 #include "ckb_syscalls.h"
-#include <stdio.h>
+
+#ifndef WAVM_CKB_VM_WASI_ABI_H
+#define WAVM_CKB_VM_WASI_ABI_H
+
+#ifndef MEMORY0_DEFINED
+extern uint8_t* memory0;
+#endif
 
 int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t writtenBytesAddress)
 {
@@ -33,3 +39,5 @@ void wavm_wasi_unstable_proc_exit(void* dummy, int32_t code)
 {
   ckb_exit(code);
 }
+
+#endif  /* WAVM_CKB_VM_WASI_ABI_H */
