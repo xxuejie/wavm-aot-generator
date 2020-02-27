@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{self, prelude::*};
 use wasmparser::{
     ExternalKind, FuncType, GlobalType, ImportSectionEntryType, MemoryType, Operator, Parser,
-    ParserState, ResizableLimits, SectionCode, Type, WasmDecoder,
+    ParserState, ResizableLimits, SectionCode, TableType, Type, WasmDecoder,
 };
 
 enum CurrentSection {
@@ -57,6 +57,7 @@ typedef struct {{
 
 const uint64_t functionDefMutableData = 0;
 const uint64_t biasedInstanceId = 0;
+const uint64_t tableReferenceBias = 0;
 \n",
                 header_id, header_id
             )
@@ -78,6 +79,7 @@ const uint64_t biasedInstanceId = 0;
     let mut next_global_index = 0;
     let mut global_content_type = Type::EmptyBlockType;
     let mut global_mutable = false;
+    let mut next_table_index = 0;
     loop {
         let state = parser.read();
         match *state {
@@ -162,6 +164,22 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
                 if field == "_start" {
                     has_main = true;
                 }
+            }
+            ParserState::TableSectionEntry(TableType {
+                limits: ResizableLimits { initial: count, .. },
+                ..
+            }) => {
+                glue_file
+                    .write_all(
+                        format!(
+                            "uintptr_t table{}[{}] = {{ 0 }};
+uintptr_t* tableOffset{} = table{};\n",
+                            next_table_index, count, next_table_index, next_table_index,
+                        )
+                        .as_bytes(),
+                    )
+                    .expect("write glue file");
+                next_table_index += 1;
             }
             ParserState::MemorySectionEntry(MemoryType {
                 limits: ResizableLimits { initial: pages, .. },

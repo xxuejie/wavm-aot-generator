@@ -8,6 +8,11 @@
 extern uint8_t* memory0;
 #endif
 
+void callIndirectFail() {
+  ckb_debug("Call indirect fail!");
+  ckb_exit(-2);
+}
+
 void unreachableTrap() {
   ckb_debug("This should not be reached!");
   ckb_exit(-1);
