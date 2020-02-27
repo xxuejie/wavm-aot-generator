@@ -8,7 +8,25 @@
 extern uint8_t* memory0;
 #endif
 
-int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
+void unreachableTrap() {
+  ckb_debug("This should not be reached!");
+  ckb_exit(-1);
+}
+
+long __atomic_load_8(void* dummy, int32_t address)
+{
+  return memory0[address];
+}
+
+wavm_ret_int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
+  /* TODO: implement memory grow later */
+  wavm_ret_int32_t ret;
+  ret.dummy = dummy;
+  ret.value = -1;
+  return ret;
+}
+
+wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
 {
   static uint8_t temp_buffer[65];
 
@@ -35,12 +53,17 @@ int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, in
     *((uint32_t*) &memory0[written_bytes_address]) = written_bytes;
   }
 
-  return 0;
+  wavm_ret_int32_t ret;
+  ret.dummy = dummy;
+  ret.value = 0;
+  return ret;
 }
 
-void wavm_wasi_unstable_proc_exit(void* dummy, int32_t code)
+void* wavm_wasi_unstable_proc_exit(void* dummy, int32_t code)
 {
   ckb_exit(code);
+
+  return dummy;
 }
 
 #endif  /* WAVM_CKB_VM_WASI_ABI_H */

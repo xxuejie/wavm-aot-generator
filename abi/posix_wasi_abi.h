@@ -8,7 +8,7 @@
 extern uint8_t* memory0;
 #endif
 
-int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
+wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
 {
   (void) dummy;
 
@@ -25,12 +25,17 @@ int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, in
     *((uint32_t*) &memory0[written_bytes_address]) = written_bytes;
   }
 
-  return 0;
+  wavm_ret_int32_t ret;
+  ret.dummy = dummy;
+  ret.value = 0;
+  return ret;
 }
 
-void wavm_wasi_unstable_proc_exit(void* dummy, int32_t code)
+void* wavm_wasi_unstable_proc_exit(void* dummy, int32_t code)
 {
   exit(code);
+
+  return dummy;
 }
 
 #endif  /* WAVM_POSIX_WASI_ABI_H */

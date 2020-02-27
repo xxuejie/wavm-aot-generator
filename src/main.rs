@@ -5,9 +5,15 @@ use std::env;
 use std::fs::File;
 use std::io::{self, prelude::*};
 use wasmparser::{
-    ExternalKind, FuncType, ImportSectionEntryType, MemoryType, Operator, Parser, ParserState,
-    ResizableLimits, SectionCode, Type, WasmDecoder,
+    ExternalKind, FuncType, GlobalType, ImportSectionEntryType, MemoryType, Operator, Parser,
+    ParserState, ResizableLimits, SectionCode, Type, WasmDecoder,
 };
+
+enum CurrentSection {
+    Empty,
+    Data,
+    Global,
+}
 
 fn main() {
     drop(env_logger::init());
@@ -18,16 +24,42 @@ fn main() {
     }
     let buf: Vec<u8> = read_wasm(&args[1]).unwrap();
     let mut glue_file = File::create(format!("{}_glue.h", args[2])).expect("create glue file");
+    let header_id = format!("{}_GLUE_H", args[2]);
     glue_file
         .write_all(
-            b"#include<stddef.h>
-#include<stdint.h>\n\n",
-        )
-        .expect("write glue file");
-    glue_file
-        .write_all(
-            b"const uint64_t functionDefMutableData = 0;
-const uint64_t biasedInstanceId = 0;\n\n",
+            format!(
+                "#include<stddef.h>
+#include<stdint.h>
+
+#ifndef {}
+#define {}
+
+typedef struct {{
+  void* dummy;
+  int32_t value;
+}} wavm_ret_int32_t;
+
+typedef struct {{
+  void* dummy;
+  int64_t value;
+}} wavm_ret_int64_t;
+
+typedef struct {{
+  void* dummy;
+  float value;
+}} wavm_ret_float;
+
+typedef struct {{
+  void* dummy;
+  double value;
+}} wavm_ret_double;
+
+const uint64_t functionDefMutableData = 0;
+const uint64_t biasedInstanceId = 0;
+\n",
+                header_id, header_id
+            )
+            .as_bytes(),
         )
         .expect("write glue file");
 
@@ -41,6 +73,10 @@ const uint64_t biasedInstanceId = 0;\n\n",
     let mut memories: Vec<Vec<u8>> = vec![];
     let mut data_index: Option<usize> = None;
     let mut data_offset: Option<usize> = None;
+    let mut current_section = CurrentSection::Empty;
+    let mut next_global_index = 0;
+    let mut global_content_type = Type::EmptyBlockType;
+    let mut global_mutable = false;
     loop {
         let state = parser.read();
         match *state {
@@ -137,18 +173,50 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
             }
             ParserState::BeginActiveDataSectionEntry(i) => {
                 data_index = Some(i as usize);
+                current_section = CurrentSection::Data;
             }
             ParserState::EndDataSectionEntry => {
                 data_index = None;
                 data_offset = None;
+                current_section = CurrentSection::Empty;
             }
-            ParserState::InitExpressionOperator(Operator::I32Const { value }) => {
-                data_offset = Some(value as usize)
-            }
+            ParserState::InitExpressionOperator(ref value) => match current_section {
+                CurrentSection::Data => {
+                    if let Operator::I32Const { value } = value {
+                        data_offset = Some(*value as usize);
+                    }
+                }
+                CurrentSection::Global => {
+                    glue_file
+                        .write_all(
+                            generate_global_entry(
+                                next_global_index,
+                                &global_content_type,
+                                global_mutable,
+                                &value,
+                            )
+                            .as_bytes(),
+                        )
+                        .expect("write glue file!");
+                    next_global_index += 1;
+                }
+                _ => (),
+            },
             ParserState::DataSectionEntryBodyChunk(data) => {
                 if let (Some(index), Some(offset)) = (data_index, data_offset) {
                     memories[index][offset..offset + data.len()].copy_from_slice(&data);
                 }
+            }
+            ParserState::BeginGlobalSectionEntry(GlobalType {
+                content_type,
+                mutable,
+            }) => {
+                global_content_type = content_type;
+                global_mutable = mutable;
+                current_section = CurrentSection::Global;
+            }
+            ParserState::EndGlobalSectionEntry => {
+                current_section = CurrentSection::Empty;
             }
             ParserState::EndWasm => break,
             ParserState::Error(ref err) => panic!("Error: {:?}", err),
@@ -183,6 +251,9 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
         }
         glue_file.write_all(b"};\n").expect("write glue file");
         glue_file
+            .write_all(format!("uint8_t* memoryOffset{} = memory{};\n", i, i).as_bytes())
+            .expect("write glue file");
+        glue_file
             .write_all(format!("#define MEMORY{}_DEFINED 1\n", i).as_bytes())
             .expect("write glue file");
     }
@@ -198,13 +269,14 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
             )
             .expect("write glue file");
     }
+
+    glue_file
+        .write_all(format!("\n#endif /* {} */\n", header_id).as_bytes())
+        .expect("write glue file");
 }
 
-fn wasm_type_to_c_type(t: Option<Type>) -> String {
-    if let None = t {
-        return "void".to_string();
-    }
-    match t.unwrap() {
+fn wasm_type_to_c_type(t: Type) -> String {
+    match t {
         Type::I32 => "int32_t".to_string(),
         Type::I64 => "int64_t".to_string(),
         Type::F32 => "float".to_string(),
@@ -220,16 +292,15 @@ fn convert_func_type_to_c_function(func_type: &FuncType, name: String) -> String
     let mut fields: Vec<String> = func_type
         .params
         .iter()
-        .map(|t| wasm_type_to_c_type(Some(*t)))
+        .map(|t| wasm_type_to_c_type(*t))
         .collect();
     fields.insert(0, "void*".to_string());
-    format!(
-        "{} ({}) ({})",
-        wasm_type_to_c_type(func_type.returns.get(0).cloned()),
-        name,
-        fields.join(", ")
-    )
-    .to_string()
+    let return_type = if func_type.returns.len() > 0 {
+        format!("wavm_ret_{}", wasm_type_to_c_type(func_type.returns[0]))
+    } else {
+        "void*".to_string()
+    };
+    format!("{} ({}) ({})", return_type, name, fields.join(", ")).to_string()
 }
 
 fn read_wasm(file: &str) -> io::Result<Vec<u8>> {
@@ -237,4 +308,37 @@ fn read_wasm(file: &str) -> io::Result<Vec<u8>> {
     let mut f = File::open(file)?;
     f.read_to_end(&mut data)?;
     Ok(data)
+}
+
+fn generate_global_entry(
+    index: usize,
+    content_type: &Type,
+    mutable: bool,
+    value: &Operator,
+) -> String {
+    let mutable_string = if mutable { "const " } else { "" };
+    let type_string = wasm_type_to_c_type(content_type.clone());
+
+    let value_string = match content_type {
+        Type::I32 => {
+            if let Operator::I32Const { value } = value {
+                value.to_string()
+            } else {
+                panic!("Invalid global value {:?} for type {:?}",)
+            }
+        }
+        Type::I64 => {
+            if let Operator::I64Const { value } = value {
+                value.to_string()
+            } else {
+                panic!("Invalid global value {:?} for type {:?}",)
+            }
+        }
+        _ => panic!("Invalid content type: {:?} for global entry", content_type),
+    };
+
+    format!(
+        "{}{} global{} = {};\n",
+        mutable_string, type_string, index, value_string
+    )
 }
