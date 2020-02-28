@@ -26,6 +26,9 @@ long __atomic_load_8(void* p, int32_t _mode)
 
 wavm_ret_int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
   /* TODO: implement memory grow later */
+  ckb_debug("Implement memory.grow!");
+  ckb_exit(-10);
+
   wavm_ret_int32_t ret;
   ret.dummy = dummy;
   ret.value = -1;
