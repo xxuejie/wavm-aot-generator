@@ -334,7 +334,7 @@ fn generate_global_entry(
     mutable: bool,
     value: &Operator,
 ) -> String {
-    let mutable_string = if mutable { "const " } else { "" };
+    let mutable_string = if mutable { "" } else { "const " };
     let type_string = wasm_type_to_c_type(content_type.clone());
 
     let value_string = match content_type {
