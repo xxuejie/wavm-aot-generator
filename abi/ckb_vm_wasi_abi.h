@@ -5,7 +5,7 @@
 #define WAVM_CKB_VM_WASI_ABI_H
 
 #ifndef MEMORY0_DEFINED
-extern uint8_t* memory0;
+extern uint8_t* memoryOffset0;
 #endif
 
 void callIndirectFail() {
@@ -18,9 +18,10 @@ void unreachableTrap() {
   ckb_exit(-1);
 }
 
-long __atomic_load_8(void* dummy, int32_t address)
+long __atomic_load_8(void* p, int32_t _mode)
 {
-  return memory0[address];
+  (void) _mode;
+  return *((uint64_t*) ((uintptr_t) p));
 }
 
 wavm_ret_int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
@@ -37,9 +38,9 @@ wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t ad
 
   int32_t written_bytes = 0;
   for (int32_t i = 0; i < num; i++) {
-    uint32_t buffer_address = *((uint32_t*) &memory0[address + i * 8]);
-    uint8_t* buf = &memory0[buffer_address];
-    uint32_t buffer_length = *((uint32_t*) &memory0[address + i * 8 + 4]);
+    uint32_t buffer_address = *((uint32_t*) &memoryOffset0[address + i * 8]);
+    uint8_t* buf = &memoryOffset0[buffer_address];
+    uint32_t buffer_length = *((uint32_t*) &memoryOffset0[address + i * 8 + 4]);
 
     int32_t written = 0;
     while (written < buffer_length) {
@@ -55,7 +56,7 @@ wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t ad
     written_bytes += buffer_length;
   }
   if (written_bytes_address != 0) {
-    *((uint32_t*) &memory0[written_bytes_address]) = written_bytes;
+    *((uint32_t*) &memoryOffset0[written_bytes_address]) = written_bytes;
   }
 
   wavm_ret_int32_t ret;

@@ -5,14 +5,16 @@ use std::env;
 use std::fs::File;
 use std::io::{self, prelude::*};
 use wasmparser::{
-    ExternalKind, FuncType, GlobalType, ImportSectionEntryType, MemoryType, Operator, Parser,
-    ParserState, ResizableLimits, SectionCode, TableType, Type, WasmDecoder,
+    ElemSectionEntryTable, ElementItem, ExternalKind, FuncType, GlobalType, ImportSectionEntryType,
+    MemoryType, Operator, Parser, ParserState, ResizableLimits, SectionCode, TableType, Type,
+    WasmDecoder,
 };
 
 enum CurrentSection {
     Empty,
     Data,
     Global,
+    Element,
 }
 
 fn main() {
@@ -57,7 +59,6 @@ typedef struct {{
 
 const uint64_t functionDefMutableData = 0;
 const uint64_t biasedInstanceId = 0;
-const uint64_t tableReferenceBias = 0;
 \n",
                 header_id, header_id
             )
@@ -79,7 +80,9 @@ const uint64_t tableReferenceBias = 0;
     let mut next_global_index = 0;
     let mut global_content_type = Type::EmptyBlockType;
     let mut global_mutable = false;
-    let mut next_table_index = 0;
+    let mut tables: Vec<Vec<String>> = vec![];
+    let mut table_index: Option<usize> = None;
+    let mut table_offset: Option<usize> = None;
     loop {
         let state = parser.read();
         match *state {
@@ -166,20 +169,12 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
                 }
             }
             ParserState::TableSectionEntry(TableType {
+                element_type: Type::AnyFunc,
                 limits: ResizableLimits { initial: count, .. },
-                ..
             }) => {
-                glue_file
-                    .write_all(
-                        format!(
-                            "uintptr_t table{}[{}] = {{ 0 }};
-uintptr_t* tableOffset{} = table{};\n",
-                            next_table_index, count, next_table_index, next_table_index,
-                        )
-                        .as_bytes(),
-                    )
-                    .expect("write glue file");
-                next_table_index += 1;
+                let mut table = vec![];
+                table.resize(count as usize, "0".to_string());
+                tables.push(table);
             }
             ParserState::MemorySectionEntry(MemoryType {
                 limits: ResizableLimits { initial: pages, .. },
@@ -204,6 +199,11 @@ uintptr_t* tableOffset{} = table{};\n",
                         data_offset = Some(*value as usize);
                     }
                 }
+                CurrentSection::Element => {
+                    if let Operator::I32Const { value } = value {
+                        table_offset = Some(*value as usize);
+                    }
+                }
                 CurrentSection::Global => {
                     glue_file
                         .write_all(
@@ -218,11 +218,24 @@ uintptr_t* tableOffset{} = table{};\n",
                         .expect("write glue file!");
                     next_global_index += 1;
                 }
-                _ => (),
+                CurrentSection::Empty => {
+                    debug!("Omitted init expression: {:?}", value);
+                }
             },
             ParserState::DataSectionEntryBodyChunk(data) => {
-                if let (Some(index), Some(offset)) = (data_index, data_offset) {
-                    memories[index][offset..offset + data.len()].copy_from_slice(&data);
+                let index = data_index.unwrap();
+                let offset = data_offset.unwrap();
+                memories[index][offset..offset + data.len()].copy_from_slice(&data);
+            }
+            ParserState::ElementSectionEntryBody(ref items) => {
+                let index = table_index.unwrap();
+                let offset = table_offset.unwrap();
+
+                for (i, item) in items.iter().enumerate() {
+                    if let ElementItem::Func(func_index) = item {
+                        tables[index][offset + i] =
+                            format!("((uintptr_t) (functionDef{}))", func_index);
+                    }
                 }
             }
             ParserState::BeginGlobalSectionEntry(GlobalType {
@@ -236,10 +249,61 @@ uintptr_t* tableOffset{} = table{};\n",
             ParserState::EndGlobalSectionEntry => {
                 current_section = CurrentSection::Empty;
             }
+            ParserState::BeginElementSectionEntry {
+                table: ElemSectionEntryTable::Active(i),
+                ty: Type::AnyFunc,
+            } => {
+                table_index = Some(i as usize);
+                current_section = CurrentSection::Element;
+            }
+            ParserState::EndElementSectionEntry => {
+                table_index = None;
+                table_offset = None;
+                current_section = CurrentSection::Empty;
+            }
             ParserState::EndWasm => break,
             ParserState::Error(ref err) => panic!("Error: {:?}", err),
             _ => debug!("Unprocessed states: {:?}", state),
         }
+    }
+
+    for (i, table) in tables.iter().enumerate() {
+        glue_file
+            .write_all(format!("uint32_t table{}_length = {};\n", i, table.len()).as_bytes())
+            .expect("write glue file");
+        glue_file
+            .write_all(format!("uintptr_t table{}[{}] = {{", i, table.len()).as_bytes())
+            .expect("write glue file");
+        let reversed_striped_table: Vec<String> = table
+            .iter()
+            .rev()
+            .map(|x| x.clone())
+            .skip_while(|c| *c == "0")
+            .collect();
+        let mut striped_table: Vec<String> = reversed_striped_table.into_iter().rev().collect();
+        if striped_table.len() == 0 {
+            striped_table.push("0".to_string());
+        }
+        for (j, c) in striped_table.iter().enumerate() {
+            if j % 4 == 0 {
+                glue_file.write_all(b"\n  ").expect("write glue file");
+            }
+            glue_file.write_all(c.as_bytes()).expect("write glue file");
+            if j < striped_table.len() - 1 {
+                glue_file.write_all(b", ").expect("write glue file");
+            }
+        }
+        glue_file.write_all(b"\n};\n").expect("write glue file");
+        glue_file
+            .write_all(
+                format!(
+                    "uintptr_t* tableOffset{} = table{};
+#define TABLE{}_DEFINED 1\n",
+                    i, i, i
+                )
+                .as_bytes(),
+            )
+            .expect("write glue file");
     }
 
     for (i, mem) in memories.iter().enumerate() {
@@ -255,7 +319,10 @@ uintptr_t* tableOffset{} = table{};\n",
             .map(|x| *x)
             .skip_while(|c| *c == 0)
             .collect();
-        let striped_mem: Vec<u8> = reversed_striped_mem.into_iter().rev().collect();
+        let mut striped_mem: Vec<u8> = reversed_striped_mem.into_iter().rev().collect();
+        if striped_mem.len() == 0 {
+            striped_mem.push(0);
+        }
         for (j, c) in striped_mem.iter().enumerate() {
             if j % 32 == 0 {
                 glue_file.write_all(b"\n  ").expect("write glue file");
@@ -267,12 +334,16 @@ uintptr_t* tableOffset{} = table{};\n",
                 glue_file.write_all(b", ").expect("write glue file");
             }
         }
-        glue_file.write_all(b"};\n").expect("write glue file");
+        glue_file.write_all(b"\n};\n").expect("write glue file");
         glue_file
-            .write_all(format!("uint8_t* memoryOffset{} = memory{};\n", i, i).as_bytes())
-            .expect("write glue file");
-        glue_file
-            .write_all(format!("#define MEMORY{}_DEFINED 1\n", i).as_bytes())
+            .write_all(
+                format!(
+                    "uint8_t* memoryOffset{} = memory{};
+#define MEMORY{}_DEFINED 1\n",
+                    i, i, i
+                )
+                .as_bytes(),
+            )
             .expect("write glue file");
     }
 
