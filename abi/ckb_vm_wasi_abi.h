@@ -1,8 +1,16 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "ckb_syscalls.h"
 
 #ifndef WAVM_CKB_VM_WASI_ABI_H
 #define WAVM_CKB_VM_WASI_ABI_H
+
+/*
+ * Since we are leveraging the unique memory model in CKB VM to optimize
+ * the code, malloc is not allowed here.
+ */
+#define malloc malloc_is_not_allowed_in_wavm_runtime
 
 #ifndef MEMORY0_DEFINED
 extern uint8_t* memoryOffset0;
@@ -24,26 +32,33 @@ long __atomic_load_8(void* p, int32_t _mode)
   return *((uint64_t*) ((uintptr_t) p));
 }
 
-wavm_ret_int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
-  /* TODO: implement memory grow later */
-  ckb_debug("Implement memory.grow!");
-  ckb_exit(-10);
+#ifndef WAVM_MAX_MEMORY
+#define WAVM_MAX_MEMORY 0x300000
+#endif  /* WAVM_MAX_MEMORY */
+#define WAVM_PAGE_SIZE 0x10000
 
-  wavm_ret_int32_t ret;
-  ret.dummy = dummy;
-  ret.value = -1;
-  return ret;
+int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
+  if ((uintptr_t) (memoryOffset0 + memory0_length + grow_by * WAVM_PAGE_SIZE) > WAVM_MAX_MEMORY) {
+    ckb_debug("Grow page failure!");
+    return -1;
+  }
+
+  int32_t old_pages = memory0_length / WAVM_PAGE_SIZE;
+  memory0_length += grow_by * WAVM_PAGE_SIZE;
+  return old_pages;
 }
 
 wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t address, int32_t num, int32_t written_bytes_address)
 {
   static uint8_t temp_buffer[65];
+  uint8_t* current_memory = (uint8_t*) memoryOffset0;
 
   int32_t written_bytes = 0;
   for (int32_t i = 0; i < num; i++) {
-    uint32_t buffer_address = *((uint32_t*) &memoryOffset0[address + i * 8]);
-    uint8_t* buf = &memoryOffset0[buffer_address];
-    uint32_t buffer_length = *((uint32_t*) &memoryOffset0[address + i * 8 + 4]);
+
+    uint32_t buffer_address = *((uint32_t*) &current_memory[address + i * 8]);
+    uint8_t* buf = &current_memory[buffer_address];
+    uint32_t buffer_length = *((uint32_t*) &current_memory[address + i * 8 + 4]);
 
     int32_t written = 0;
     while (written < buffer_length) {
@@ -59,7 +74,7 @@ wavm_ret_int32_t wavm_wasi_unstable_fd_write(void* dummy, int32_t fd, int32_t ad
     written_bytes += buffer_length;
   }
   if (written_bytes_address != 0) {
-    *((uint32_t*) &memoryOffset0[written_bytes_address]) = written_bytes;
+    *((uint32_t*) &current_memory[written_bytes_address]) = written_bytes;
   }
 
   wavm_ret_int32_t ret;
