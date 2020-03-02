@@ -226,6 +226,7 @@ const uint64_t functionDefMutableDatas{} = 0;\n",
                 let index = data_index.unwrap();
                 let offset = data_offset.unwrap();
                 memories[index][offset..offset + data.len()].copy_from_slice(&data);
+                data_offset = Some(offset + data.len());
             }
             ParserState::ElementSectionEntryBody(ref items) => {
                 let index = table_index.unwrap();
