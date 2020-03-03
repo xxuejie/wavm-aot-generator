@@ -37,6 +37,11 @@ long __atomic_load_8(void* p, int32_t _mode)
 #endif  /* WAVM_MAX_MEMORY */
 #define WAVM_PAGE_SIZE 0x10000
 
+/*
+ * Note that this optimized memory grow implementation must be used together with
+ * the custom linker script `riscv64.lds` in current directory. Otherwise you might
+ * run into unexpected behaviors.
+ */
 int32_t wavm_intrinsic_memory_grow(void* dummy, int32_t grow_by) {
   if ((uintptr_t) (memoryOffset0 + memory0_length + grow_by * WAVM_PAGE_SIZE) > WAVM_MAX_MEMORY) {
     ckb_debug("Grow page failure!");
