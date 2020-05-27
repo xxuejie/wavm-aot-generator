@@ -28,7 +28,7 @@ $ cat << EOF > dummy.c
 #include "helloworld_x86_glue.h"
 #include "abi/posix_wasi_abi.h"
 EOF
-$ gcc -g -o helloworld.riscv64 helloworld_x86.o dummy.c
+$ gcc -g -o helloworld.x86 helloworld_x86.o dummy.c
 $ ./helloworld.x86
 Hello World!
 ```
